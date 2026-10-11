@@ -1,0 +1,615 @@
+// Sequel — data model
+// Every table that holds confidential information is only ever read through
+// the authorization helpers in src/lib/authz.ts and the serializers in
+// src/lib/serializers.ts. Never query these tables directly from a page.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Identity & access ──────────────────────────────────────────────────────
+
+enum Role {
+  FOUNDER
+  BUYER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model User {
+  id                 String        @id @default(cuid())
+  email              String        @unique
+  passwordHash       String
+  role               Role
+  status             AccountStatus @default(ACTIVE)
+  emailVerifiedAt    DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  lastLoginAt        DateTime?
+  // Notification preferences
+  notifyEmailRequests Boolean      @default(true)
+  notifyEmailMessages Boolean      @default(true)
+  notifyEmailUpdates  Boolean      @default(false)
+  // Consent record (privacy notice version accepted at sign-up)
+  privacyAcceptedAt  DateTime?
+  privacyVersion     String?
+
+  sessions           Session[]
+  tokens             AuthToken[]
+  founderProfile     FounderProfile?
+  buyerProfile       BuyerProfile?
+  ventures           Venture[]               @relation("VentureFounder")
+  verificationRequests VerificationRequest[] @relation("VerificationSubject")
+  reviewedVerifications VerificationRequest[] @relation("VerificationReviewer")
+  interactions       VentureInteraction[]
+  views              VentureView[]
+  accessRequests     AccessRequest[]         @relation("AccessBuyer")
+  pipeline           PipelineEntry[]
+  buyerConversations Conversation[]          @relation("ConversationBuyer")
+  founderConversations Conversation[]        @relation("ConversationFounder")
+  messages           Message[]
+  offers             Offer[]
+  notifications      Notification[]
+  reports            Report[]                @relation("ReportReporter")
+  auditEvents        AuditLog[]              @relation("AuditActor")
+}
+
+model Session {
+  id         String   @id // SHA-256 hash of the session token; raw token only lives in the cookie
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  userAgent  String?
+
+  @@index([userId])
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      TokenType
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, type])
+}
+
+model RateLimit {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+}
+
+// ─── Profiles ───────────────────────────────────────────────────────────────
+
+model FounderProfile {
+  userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  legalName   String   // never exposed publicly; used for verification only
+  displayName String   // shown to approved buyers only
+  companyRole String
+  country     String
+  linkedinUrl String?
+  bio         String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum BuyerCategory {
+  ENTREPRENEUR
+  HOLDING_COMPANY
+  STRATEGIC_BUYER
+  INVESTOR
+  OTHER
+}
+
+enum BuyerVerification {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+}
+
+model BuyerProfile {
+  userId             String            @id
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alias              String            @unique
+  category           BuyerCategory
+  industries         String[]
+  stages             String[]
+  budgetMin          Int?
+  budgetMax          Int?
+  experience         String?
+  thesis             String?
+  // What the buyer chooses to show founders alongside the alias
+  discloseCategory   Boolean           @default(true)
+  discloseBudget     Boolean           @default(false)
+  discloseExperience Boolean           @default(false)
+  discloseThesis     Boolean           @default(false)
+  verification       BuyerVerification @default(UNVERIFIED)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+// ─── Verification ───────────────────────────────────────────────────────────
+
+enum VerificationKind {
+  IDENTITY        // founder level 2
+  OWNERSHIP       // founder level 3 (per venture)
+  FINANCIAL       // founder level 4 (per venture)
+  BUYER_FUNDS     // buyer proof of funds / capability
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model VerificationRequest {
+  id          String             @id @default(cuid())
+  userId      String
+  user        User               @relation("VerificationSubject", fields: [userId], references: [id], onDelete: Cascade)
+  ventureId   String?
+  venture     Venture?           @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  kind        VerificationKind
+  status      VerificationStatus @default(PENDING)
+  statement   String             // what the user claims / describes
+  reviewerId  String?
+  reviewer    User?              @relation("VerificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewNote  String?
+  reviewedAt  DateTime?
+  expiresAt   DateTime?
+  provider    String             @default("manual") // future: external IDV provider name
+  createdAt   DateTime           @default(now())
+  documents   VerificationDocument[]
+
+  @@index([userId, kind])
+  @@index([status])
+}
+
+model VerificationDocument {
+  id         String              @id @default(cuid())
+  requestId  String
+  request    VerificationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  filename   String
+  mimeType   String
+  size       Int
+  storageKey String              @unique
+  createdAt  DateTime            @default(now())
+}
+
+// ─── Ventures ───────────────────────────────────────────────────────────────
+
+enum VentureStage {
+  IDEA
+  PROTOTYPE
+  MVP
+  EARLY_TRACTION
+  REVENUE
+  PROFITABLE
+}
+
+enum RevenueStatus {
+  PRE_REVENUE
+  OCCASIONAL
+  RECURRING
+  PROFITABLE
+}
+
+enum BusinessModel {
+  SAAS
+  MARKETPLACE
+  ECOMMERCE
+  SUBSCRIPTION
+  TRANSACTIONAL
+  ADVERTISING
+  SERVICES
+  HARDWARE
+  LICENSING
+  OTHER
+}
+
+enum AcquisitionType {
+  FULL_COMPANY
+  ASSET_ACQUISITION
+  INTELLECTUAL_PROPERTY
+  PROJECT_TRANSFER
+}
+
+enum PriceType {
+  FIXED
+  RANGE
+  ON_REQUEST
+}
+
+enum VentureStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  SOLD
+  REMOVED
+}
+
+enum Confidentiality {
+  STANDARD      // teaser is public, details after approval
+  CONFIDENTIAL  // teaser public under alias, details after approval + NDA
+  STEALTH       // teaser only visible to signed-in, email-verified users
+}
+
+model Venture {
+  id                  String          @id @default(cuid())
+  slug                String          @unique
+  founderId           String
+  founder             User            @relation("VentureFounder", fields: [founderId], references: [id], onDelete: Cascade)
+
+  // Tier 1 — public teaser
+  alias               String
+  tagline             String
+  summary             String
+  industry            String
+  businessModel       BusinessModel
+  stage               VentureStage
+  revenueStatus       RevenueStatus   @default(PRE_REVENUE)
+  acquisitionType     AcquisitionType @default(FULL_COMPANY)
+  assetsIncluded      String[]
+  geography           String
+  teamSize            Int             @default(1)
+  foundedYear         Int?
+  priceType           PriceType       @default(ON_REQUEST)
+  askingPrice         Int?
+  askingPriceMin      Int?
+  askingPriceMax      Int?
+  currency            String          @default("CHF")
+  tractionHeadline    String?         // e.g. "1,200 waitlist sign-ups" — general indicator only
+  coverSeed           Int             @default(0) // deterministic generated cover art
+
+  // Derived from PUBLIC (teaser-tier) data only, so filters and sorting can never leak
+  // confidential figures. Recomputed by recomputeDerived() on every save.
+  priceFloor          Int?
+  publicMonthlyRevenue Float?
+  tractionScore       Float           @default(0)
+
+  // Tier 2 — approved buyers only
+  legalName           String?
+  showLegalName       Boolean         @default(false)
+  problem             String?
+  valueProposition    String?
+  productStatus       String?
+  mvpDescription      String?
+  monetization        String?
+  customersDescription String?
+  partnerships        String?
+  techStack           String[]
+  intellectualProperty String?
+  growthOpportunities String?
+  saleRationale       String?
+  saleStructure       String?
+  demoUrl             String?
+  websiteUrl          String?
+
+  // Publication
+  status              VentureStatus   @default(DRAFT)
+  confidentiality     Confidentiality @default(STANDARD)
+  requireNda          Boolean         @default(true)
+  wizardStep          Int             @default(1)
+  featured            Boolean         @default(false)
+  flagged             Boolean         @default(false)
+  moderationNote      String?
+  publishedAt         DateTime?
+  soldAt              DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  isDemo              Boolean         @default(false)
+
+  metrics             Metric[]
+  documents           VentureDocument[]
+  interactions        VentureInteraction[]
+  views               VentureView[]
+  accessRequests      AccessRequest[]
+  conversations       Conversation[]
+  pipeline            PipelineEntry[]
+  offers              Offer[]
+  verifications       VerificationRequest[]
+
+  @@index([status, publishedAt])
+  @@index([founderId])
+}
+
+enum MetricKey {
+  MRR
+  MONTHLY_REVENUE
+  ANNUAL_REVENUE
+  MONTHLY_EXPENSES
+  MONTHLY_NET_PROFIT
+  CUSTOMERS
+  ACTIVE_USERS
+  GROWTH_RATE
+}
+
+enum MetricSource {
+  VERIFIED
+  FOUNDER_REPORTED
+  ESTIMATED
+  NOT_DISCLOSED
+  NOT_APPLICABLE
+}
+
+enum MetricNature {
+  HISTORICAL
+  PROJECTION
+}
+
+enum InfoTier {
+  TEASER    // public
+  DETAILS   // approved buyers
+  DATA_ROOM // approved data-room access only
+}
+
+model Metric {
+  id         String       @id @default(cuid())
+  ventureId  String
+  venture    Venture      @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  key        MetricKey
+  value      Float?
+  period     String?      // e.g. "Aug 2026" or "Trailing 3 months to Aug 2026"
+  source     MetricSource @default(FOUNDER_REPORTED)
+  nature     MetricNature @default(HISTORICAL)
+  tier       InfoTier     @default(DETAILS)
+  evidence   String?      // description of the evidence / verifier
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([ventureId, key, nature])
+}
+
+model VentureDocument {
+  id         String   @id @default(cuid())
+  ventureId  String
+  venture    Venture  @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  tier       InfoTier @default(DATA_ROOM)
+  category   String   // financials, contracts, ip, technical, other
+  title      String
+  filename   String
+  mimeType   String
+  size       Int
+  storageKey String   @unique
+  createdAt  DateTime @default(now())
+}
+
+// ─── Discovery ──────────────────────────────────────────────────────────────
+
+enum InteractionKind {
+  SAVED
+  PASSED
+}
+
+model VentureInteraction {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ventureId String
+  venture   Venture         @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  kind      InteractionKind
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([userId, ventureId])
+  @@index([userId, kind])
+}
+
+model VentureView {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ventureId String
+  venture   Venture  @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  viewedAt  DateTime @default(now())
+
+  @@id([userId, ventureId])
+}
+
+// ─── Access, requests & deal flow ───────────────────────────────────────────
+
+enum AccessLevel {
+  DETAILS
+  DATA_ROOM
+}
+
+enum AccessStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+  WITHDRAWN
+}
+
+model AccessRequest {
+  id              String       @id @default(cuid())
+  ventureId       String
+  venture         Venture      @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  buyerId         String
+  buyer           User         @relation("AccessBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  level           AccessLevel
+  status          AccessStatus @default(PENDING)
+  message         String
+  ndaAcceptedAt   DateTime?
+  ndaVersion      String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  expiresAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([ventureId, buyerId, level])
+  @@index([buyerId])
+}
+
+enum PipelineStage {
+  DISCOVERED
+  INTERESTED
+  INFO_REQUESTED
+  IN_DISCUSSION
+  DUE_DILIGENCE
+  OFFER_SUBMITTED
+  COMPLETED
+  ARCHIVED
+}
+
+model PipelineEntry {
+  id        String        @id @default(cuid())
+  buyerId   String
+  buyer     User          @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  ventureId String
+  venture   Venture       @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  stage     PipelineStage @default(INTERESTED)
+  notes     String?       // private to the buyer, never visible to founders
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([buyerId, ventureId])
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  ventureId String
+  venture   Venture   @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User      @relation("ConversationBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  founderId String
+  founder   User      @relation("ConversationFounder", fields: [founderId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  closed    Boolean   @default(false)
+  messages  Message[]
+  offers    Offer[]
+
+  @@unique([ventureId, buyerId])
+}
+
+enum MessageKind {
+  MESSAGE
+  OFFER
+  SYSTEM
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String?
+  sender         User?        @relation(fields: [senderId], references: [id], onDelete: SetNull)
+  kind           MessageKind  @default(MESSAGE)
+  body           String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+enum OfferType {
+  EXPRESSION_OF_INTEREST
+  INDICATIVE_OFFER
+}
+
+enum OfferStatus {
+  OPEN
+  WITHDRAWN
+  DECLINED
+  ACKNOWLEDGED
+}
+
+model Offer {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  ventureId      String
+  venture        Venture      @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  buyerId        String
+  buyer          User         @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  type           OfferType
+  amount         Int?
+  currency       String       @default("CHF")
+  structure      String
+  conditions     String?
+  status         OfferStatus  @default(OPEN)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// ─── Platform ───────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+enum ReportTarget {
+  VENTURE
+  MESSAGE
+  USER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  reporterId String
+  reporter   User         @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType ReportTarget
+  targetId   String
+  reason     String
+  details    String?
+  status     ReportStatus @default(OPEN)
+  resolution String?
+  createdAt  DateTime     @default(now())
+  resolvedAt DateTime?
+
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String
+  targetId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
