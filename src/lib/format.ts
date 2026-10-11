@@ -1,21 +1,30 @@
-export function formatMoney(amount: number | null | undefined, currency = "CHF", compact = true): string {
+// Deterministic formatting (no Intl compact notation) so server and browser render identically.
+function group(n: number): string {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, "’");
+}
+
+function compact(n: number): string {
+  const abs = Math.abs(n);
+  const trim = (x: number) => (Math.round(x * 10) / 10).toString();
+  if (abs >= 1_000_000_000) return `${trim(n / 1_000_000_000)}B`;
+  if (abs >= 1_000_000) return `${trim(n / 1_000_000)}M`;
+  if (abs >= 10_000) return `${trim(n / 1_000)}K`;
+  return group(n);
+}
+
+export function formatMoney(amount: number | null | undefined, currency = "CHF", isCompact = true): string {
   if (amount == null) return "—";
-  return new Intl.NumberFormat("en-CH", {
-    style: "currency",
-    currency,
-    notation: compact && Math.abs(amount) >= 10_000 ? "compact" : "standard",
-    maximumFractionDigits: compact && Math.abs(amount) >= 10_000 ? 1 : 0,
-  }).format(amount);
+  return `${currency} ${isCompact ? compact(amount) : group(amount)}`;
 }
 
 export function formatNumber(n: number | null | undefined): string {
   if (n == null) return "—";
-  return new Intl.NumberFormat("en-CH", { notation: n >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(n);
+  return Number.isInteger(n) ? compact(n) : (Math.round(n * 10) / 10).toString();
 }
 
 export function formatDate(d: Date | string | null | undefined): string {
   if (!d) return "—";
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(d));
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(d));
 }
 
 export function timeAgo(d: Date | string): string {
@@ -39,7 +48,7 @@ export function formatPrice(v: {
 }): string {
   if (v.priceType === "FIXED" && v.askingPrice != null) return formatMoney(v.askingPrice, v.currency);
   if (v.priceType === "RANGE" && v.askingPriceMin != null && v.askingPriceMax != null)
-    return `${formatMoney(v.askingPriceMin, v.currency)} – ${formatMoney(v.askingPriceMax, v.currency)}`;
+    return `${formatMoney(v.askingPriceMin, v.currency)}–${formatMoney(v.askingPriceMax, v.currency).replace(`${v.currency} `, "")}`;
   return "Price on request";
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Role } from "@prisma/client";
 import { db } from "@/lib/db";
 import { makeUser, makeVenture } from "./helpers";
 import { createDraft, publishVenture, saveStep, setVentureStatus } from "@/lib/services/listings";
@@ -14,7 +15,7 @@ const step1 = {
   teamSize: "2",
 };
 
-async function walkWizard(founder: { id: string; role: "FOUNDER"; emailVerifiedAt: Date | null }) {
+async function walkWizard(founder: { id: string; role: Role; emailVerifiedAt: Date | null }) {
   const v = await createDraft(founder, step1);
   await saveStep(founder, v.id, 2, { summary: "A pre-revenue MVP that reconciles bank feeds into VAT-ready books for sole traders." });
   await saveStep(founder, v.id, 3, { stage: "MVP" });

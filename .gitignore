@@ -11,3 +11,4 @@ next-env.d.ts
 uploads/
 *.log
 .DS_Store
+.shot.mjs

@@ -387,7 +387,7 @@ export async function dataRoomFor(actor: Actor, ventureId: string) {
   await audit({ actorId: actor.id, action: "dataroom.viewed", targetType: "venture", targetId: ventureId });
   return {
     venture,
-    documents: documents.map(({ storageKey: _k, ...d }) => d),
+    documents: documents.map((d) => ({ id: d.id, title: d.title, category: d.category, tier: d.tier, filename: d.filename, mimeType: d.mimeType, size: d.size, createdAt: d.createdAt })),
     metrics,
     expiresAt: grant?.expiresAt ?? null,
     viewerIsOwner: isOwner(venture, actor),
