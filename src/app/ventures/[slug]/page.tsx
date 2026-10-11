@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getVentureForViewer } from "@/lib/services/ventures";
@@ -18,7 +19,7 @@ import { ResendVerification } from "@/components/resend-verification";
 
 export const dynamic = "force-dynamic";
 
-async function load(slug: string) {
+const load = cache(async (slug: string) => {
   const user = await getCurrentUser();
   try {
     return { user, data: await getVentureForViewer(slug, user) };
@@ -26,16 +27,12 @@ async function load(slug: string) {
     if (e instanceof AppError && e.code === "NOT_FOUND") notFound();
     throw e;
   }
-}
+});
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  try {
-    const { data } = await load(slug);
-    return { title: data.venture.alias, description: data.venture.tagline };
-  } catch {
-    return { title: "Venture" };
-  }
+  const { data } = await load(slug);
+  return { title: data.venture.alias, description: data.venture.tagline };
 }
 
 function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
@@ -94,7 +91,7 @@ export default async function VenturePage({ params }: { params: Promise<{ slug: 
           <div className="min-w-0">
             <div className="flex flex-wrap gap-1.5">
               <StageBadge stage={v.stage} />
-              <RevenueBadge status={v.revenueStatus} />
+              {!(v.stage === "PROFITABLE" && v.revenueStatus === "PROFITABLE") && <RevenueBadge status={v.revenueStatus} />}
               <ConfidentialityBadge level={v.confidentiality} />
               {v.status !== "PUBLISHED" && <Badge tone="amber">{v.status === "SOLD" ? "Sold" : v.status === "PAUSED" ? "Paused" : v.status === "DRAFT" ? "Draft — only you can see this" : "Removed"}</Badge>}
               {v.isDemo && <Badge tone="outline">Demo listing — fictional</Badge>}

@@ -12,3 +12,5 @@ uploads/
 *.log
 .DS_Store
 .shot.mjs
+test-results/
+playwright-report/

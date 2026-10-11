@@ -1,7 +1,6 @@
 "use client";
 
-import { createContext, useActionState, useContext, useEffect, useRef, type ReactNode } from "react";
-import { useFormStatus } from "react-dom";
+import { createContext, useContext, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Button, type buttonClass } from "./button";
 import { useToast } from "./toast";
@@ -16,8 +15,14 @@ export interface ActionState {
 type Action = (state: ActionState, formData: FormData) => Promise<ActionState>;
 
 const FormCtx = createContext<ActionState>({});
+const PendingCtx = createContext(false);
 export const useFormState = () => useContext(FormCtx);
 
+/**
+ * Form bound to a server action. Submits inside a transition instead of using React's
+ * built-in form actions, because those reset every uncontrolled field after the action —
+ * which would wipe what the user typed whenever validation fails.
+ */
 export function ActionForm({
   action,
   children,
@@ -35,37 +40,49 @@ export function ActionForm({
   showMessage?: boolean;
   id?: string;
 }) {
-  const [state, formAction] = useActionState(action, {});
+  const [state, setState] = useState<ActionState>({});
+  const [pending, startTransition] = useTransition();
   const ref = useRef<HTMLFormElement>(null);
   const toast = useToast();
-  useEffect(() => {
-    if (!state.at) return;
-    if (state.ok) {
-      if (successToast) toast(typeof successToast === "string" ? successToast : state.message || "Saved");
-      if (resetOnSuccess) ref.current?.reset();
-    }
-    if (!state.ok && state.fieldErrors) {
-      const first = Object.keys(state.fieldErrors)[0];
-      const el = ref.current?.querySelector<HTMLElement>(`[name="${CSS.escape(first)}"], [name="${CSS.escape(first)}[]"]`);
-      el?.focus();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.at]);
+
+  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (pending) return;
+    const form = e.currentTarget;
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLElement | null;
+    const fd = new FormData(form, submitter);
+    startTransition(async () => {
+      const res = await action(state, fd);
+      setState(res);
+      if (res.ok) {
+        if (successToast) toast(typeof successToast === "string" ? successToast : res.message || "Saved");
+        if (resetOnSuccess) form.reset();
+      } else if (res.fieldErrors) {
+        const first = Object.keys(res.fieldErrors)[0];
+        form.querySelector<HTMLElement>(`[name="${CSS.escape(first)}"], [name="${CSS.escape(first)}[]"]`)?.focus();
+      } else if (res.message && !showMessage) {
+        toast(res.message, { tone: "error" });
+      }
+    });
+  };
+
   return (
     <FormCtx.Provider value={state}>
-      <form ref={ref} action={formAction} className={className} id={id} noValidate>
-        {showMessage && state.message && !state.ok && (
-          <div role="alert" className="mb-5 rounded-xl border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay">
-            {state.message}
-          </div>
-        )}
-        {showMessage && state.message && state.ok && !successToast && (
-          <div role="status" className="mb-5 rounded-xl border border-lime/30 bg-lime/10 px-4 py-3 text-sm text-lime">
-            {state.message}
-          </div>
-        )}
-        {children}
-      </form>
+      <PendingCtx.Provider value={pending}>
+        <form ref={ref} onSubmit={onSubmit} className={className} id={id} noValidate aria-busy={pending}>
+          {showMessage && state.message && !state.ok && (
+            <div role="alert" className="mb-5 rounded-xl border border-clay/40 bg-clay/10 px-4 py-3 text-sm text-clay">
+              {state.message}
+            </div>
+          )}
+          {showMessage && state.message && state.ok && !successToast && (
+            <div role="status" className="mb-5 rounded-xl border border-lime/30 bg-lime/10 px-4 py-3 text-sm text-lime">
+              {state.message}
+            </div>
+          )}
+          {children}
+        </form>
+      </PendingCtx.Provider>
     </FormCtx.Provider>
   );
 }
@@ -89,7 +106,7 @@ export function SubmitButton({
   value?: string;
   formNoValidate?: boolean;
 }) {
-  const { pending } = useFormStatus();
+  const pending = useContext(PendingCtx);
   return (
     <Button type="submit" variant={variant} size={size} className={className} disabled={pending} name={name} value={value} formNoValidate={formNoValidate} aria-busy={pending}>
       {pending && (

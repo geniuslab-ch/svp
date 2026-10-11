@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, type ReactNode } from "react";
+import { useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { Button } from "./button";
 import { useToast } from "./toast";
 import type { ActionState } from "./form";
@@ -28,14 +28,18 @@ export function ConfirmAction({
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [state, formAction, pending] = useActionState(action, {});
+  const [pending, startTransition] = useTransition();
   const toast = useToast();
-  useEffect(() => {
-    if (!state.at) return;
-    setOpen(false);
-    toast(state.message ?? (state.ok ? "Done" : "Something went wrong"), { tone: state.ok ? "ok" : "error" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.at]);
+  // Toast from the submit handler (not an effect) so feedback survives the row unmounting on refresh.
+  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    startTransition(async () => {
+      const res = await action({}, fd);
+      setOpen(false);
+      toast(res.message ?? (res.ok ? "Done" : "Something went wrong"), { tone: res.ok ? "ok" : "error" });
+    });
+  };
   return (
     <>
       <Button type="button" variant={variant} size="sm" onClick={() => setOpen(true)}>
@@ -46,7 +50,7 @@ export function ConfirmAction({
           <div role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" className="surface w-full max-w-md p-7" onClick={(e) => e.stopPropagation()}>
             <h2 id="confirm-title" className="serif text-3xl">{title}</h2>
             <div className="mt-2 text-sm text-ivory-300">{body}</div>
-            <form action={formAction} className="mt-6">
+            <form onSubmit={onSubmit} className="mt-6">
               {Object.entries(fields).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
               {children}
               <div className="mt-4 flex justify-end gap-2">

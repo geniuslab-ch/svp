@@ -1,0 +1,43 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Free stack: Render free web service + Supabase free Postgres & private Storage + (optional) Resend free email.
+# Secrets marked `sync: false` are entered in the Render dashboard on first deploy; they are never committed.
+services:
+  - type: web
+    name: sequel-marketplace
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npx prisma migrate deploy && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: DATABASE_URL        # Supabase "Transaction pooler" URL (port 6543) + ?pgbouncer=true&connection_limit=1
+        sync: false
+      - key: DIRECT_URL          # Supabase "Session pooler" URL (port 5432), used by migrations
+        sync: false
+      - key: APP_URL             # e.g. https://sequel-marketplace.onrender.com
+        sync: false
+      - key: STORAGE_DRIVER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: sequel-private
+      - key: EMAIL_DRIVER        # "console" logs emails to Render logs; set "resend" with a key for real email
+        value: console
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: DEMO_MODE           # set to "false" before inviting real users
+        value: "true"

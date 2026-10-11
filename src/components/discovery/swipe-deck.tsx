@@ -67,7 +67,7 @@ function SwipeCard({ v, onDecide, active, depth }: { v: VentureTeaser; onDecide:
 
       <div className="flex min-h-0 flex-1 flex-col p-5 sm:p-6">
         <div className="flex items-center justify-between gap-2">
-          <div className="eyebrow min-w-0 truncate">{v.industry} · {MODEL_LABEL[v.businessModel]} · {v.geography}</div>
+          <div className="eyebrow min-w-0 truncate">{[v.industry, MODEL_LABEL[v.businessModel], v.geography].filter((x, i, a) => a.findIndex((y) => y.toLowerCase().replace(/[^a-z]/g, "") === x.toLowerCase().replace(/[^a-z]/g, "")) === i).join(" · ")}</div>
           <VerificationBadge level={v.founderLevel} compact />
         </div>
         <h2 className="serif mt-2 text-[30px] leading-[1.02] sm:text-[34px]">{v.alias}</h2>

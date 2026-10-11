@@ -253,6 +253,8 @@ const ventures: DemoVenture[] = [
 async function main() {
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
 
+  // Reset rate-limit counters so repeated demo/test runs start clean.
+  await db.rateLimit.deleteMany({});
   // Remove previous demo data (cascade deletes their ventures, requests, etc.)
   await db.user.deleteMany({ where: { email: { endsWith: `@${DEMO_DOMAIN}` } } });
 
