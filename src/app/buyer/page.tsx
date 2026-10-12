@@ -45,7 +45,7 @@ export default async function BuyerDashboard() {
         <ButtonLink href="/discover">Discover more</ButtonLink>
       </div>
 
-      <div className="mt-8 grid grid-cols-3 gap-px overflow-hidden rounded-card border border-ink-700/70 bg-ink-700/70 sm:grid-cols-7">
+      <div className="mt-8 grid grid-cols-3 gap-px overflow-hidden rounded-card border border-ink-700/70 bg-ink-700/70 sm:grid-cols-6">
         {columns.map((c) => (
           <div key={c.value} className="bg-ink-950 p-3">
             <div className="num text-2xl">{active.filter((e) => e.stage === c.value).length}</div>
