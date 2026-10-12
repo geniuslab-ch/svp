@@ -10,7 +10,7 @@ services:
     # The repository has no `main` branch yet; deploy the branch the app lives on.
     # Change this to `main` once the work is merged there.
     branch: claude/cool-shannon-5rmtl1
-    buildCommand: npm ci --include=dev && npx prisma migrate deploy && npm run build
+    buildCommand: npm ci --include=dev && npx prisma migrate deploy && npm run build && if [ "$SEED_DEMO" = "true" ]; then npm run db:seed; fi
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
@@ -41,5 +41,7 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      - key: SEED_DEMO           # "true" (re)loads the fictional demo listings & accounts on each deploy; set "false" for real users
+        value: "true"
       - key: DEMO_MODE           # set to "false" before inviting real users
         value: "true"
