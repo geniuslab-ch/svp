@@ -7,8 +7,10 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    branch: main
-    buildCommand: npm ci && npx prisma migrate deploy && npm run build
+    # The repository has no `main` branch yet; deploy the branch the app lives on.
+    # Change this to `main` once the work is merged there.
+    branch: claude/cool-shannon-5rmtl1
+    buildCommand: npm ci --include=dev && npx prisma migrate deploy && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
@@ -27,8 +29,8 @@ services:
         sync: false
       - key: STORAGE_DRIVER
         value: supabase
-      - key: SUPABASE_URL
-        sync: false
+      - key: SUPABASE_URL       # project URL is public; the service-role key below is the secret
+        value: https://ipmhybxykdddzzojywge.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
